@@ -5,6 +5,9 @@ destination=""
 interaction=0
 mode=0
 filename=()
+host=""
+user="root"
+port="22"
 
 logfile="$(dirname $0)/iterm2-scp.log"
 # logfile=/dev/null
@@ -42,6 +45,27 @@ parseCommand()
             shift ;
             if [[ -n "${1}" ]]; then
                 destination="$1"
+                shift ;
+            fi
+            ;;
+            -h)
+            shift ;
+            if [[ -n "${1}" ]]; then
+                host="$1"
+                shift ;
+            fi
+            ;;
+            -u)
+            shift ;
+            if [[ -n "${1}" ]]; then
+                user="$1"
+                shift ;
+            fi
+            ;;
+            -p)
+            shift ;
+            if [[ -n "${1}" ]]; then
+                port="$1"
                 shift ;
             fi
             ;;
@@ -116,106 +140,116 @@ exitNow()
 main()
 {
     echo "[ " $(date +'%Y-%m-%d %H:%M:%S') " ]" $* >> $logfile
+    parseCommand $*
+    info "Command parse result: mode=$mode serverPWD=$serverPWD destination=$destination filename=${filename[*]} user=$user host=$host port=$port"
+
     local process=$(ps aux | grep $1 | grep -v grep | grep -v iterm2-scp.sh | grep ssh)
-    # info $process
+    info $process
+
     shift ;
     if [[ -n "$process" ]]; then
-        local user=$(echo "$process" | grep -Eo "\w+@" | grep -Eo "\w+")
-        local host=$(echo "$process" | grep -Eo "@[0-9.]+" | grep -Eo "[0-9.]+")
-        local port=$(echo "$process" | grep -Eo "\-p [0-9]+" | grep -Eo "[0-9]+")
-
+        local ssh_user=$(echo "$process" | grep -Eo "\w+@" | grep -Eo "\w+")
+        local ssh_host=$(echo "$process" | grep -Eo "@[0-9.]+" | grep -Eo "[0-9.]+")
+        local ssh_port=$(echo "$process" | grep -Eo "\-p [0-9]+" | grep -Eo "[0-9]+")
+        if [[ "$ssh_user" != "" ]]; then
+            user="$ssh_user"
+        fi
+        if [[ "$ssh_host" != "" ]]; then
+            host="$ssh_host"
+        fi
+        if [[ "$ssh_port" != "" ]]; then
+            port="$ssh_port"
+        fi
         if [[ "$host" == "" ]]; then
             error "Can't parse ssh host"
             exitNow
         fi
-
-        if [[ "$user" == "" ]]; then
-            user="$USER"
-        fi
-
-        if [[ "$port" == "" ]]; then
-            port="22"
-        fi
-        info "SSH parse result: user=$user host=$host port=$port"
-
-        ssh -p $port $user@$host "hostname" >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            notify "Please enable SSH ControlMaster or enable SSH public key login" "SSH can't reuse"
+    else
+        if [[ "$host" == "" ]]; then
+            error "No ssh host, please use -h option"
             exitNow
         fi
+    fi
 
-        # scp_send '-w' 'pwd' '-d' 'destination' '-i' 'localfile1' 'localfile2'
-        # scp_send '-w' 'pwd' '-d' 'destination' 'localfile1' 'localfile2'
-        # scp_receive '-w' 'pwd' '-d' 'destination' 'serverfile1' 'serverfile2'
+    if [[ "$user" == "" ]]; then
+        user="$USER"
+    fi
 
-        parseCommand $*
-        info "Command parse result: mode=$mode serverPWD=$serverPWD destination=$destination filename=${filename[*]}"
+    if [[ "$port" == "" ]]; then
+        port="22"
+    fi
+    info "SSH parse result: user=$user host=$host port=$port"
 
-        if [[ "$mode" == "1" ]]; then
-            # download files
-            if [[ ${#filename[*]} -lt 1 ]]; then
-                notify "'Usage: js serverfile1 [serverfile2]'" "Please input filenames need to be download."
-                exitNow
-            fi
-            local serverPath=""
-            for path in ${filename[@]}
-            do
-                serverPath="$serverPath $(packPath "$serverPWD" "$path")"
-            done
-            info "Receive files on server: $serverPath"
-
-            local saveDir=$(chooseFolder)
-
-            if [[ "$saveDir" == "" ]];then
-                notify "Canceld"
-                exitNow
-            fi
-            info "Local saveDir: $saveDir"
-
-            local command="scp -r -P $port $user@$host:\"$serverPath\" '$saveDir'"
-
-            info "Run command: $command"
-            eval $command >> $logfile
-            info "File downloaded successfully!"
-            notify "File downloaded successfully!"
-        else
-            # upload files
-            if [[ "$destination" != "" ]]; then
-                destination=$(packPath "'$serverPWD'" "'$destination'")
-            else
-                destination="$serverPWD"
-            fi
-
-            local chooseMode=$(chooseMode)
-            local sendFile
-            if [[ "$chooseMode" == "0" ]]; then
-                sendFile=$(chooseFile)
-            else
-                sendFile=$(chooseFolder)
-            fi
-            if [[ "$sendFile" == "" ]];then
-                notify "Canceld"
-                exitNow
-            fi
-
-            local patern=""
-            if [[ "$chooseMode" == "2" ]]; then
-                patern="*"
-            fi
-            info "Local sendFile: $sendFile"
-
-            local command="scp -r -P $port ${sendFile}$patern $user@$host:'$destination'"
-
-            info "Run command: $command"
-            eval $command >> $logfile
-            info "File upload successfully!"
-            notify "File upload successfully!"
-        fi
-    else
-        info "Not ssh process"
+    ssh -p $port $user@$host "hostname" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        notify "Please enable SSH ControlMaster or enable SSH public key login" "SSH can't reuse"
         exitNow
     fi
 
+    # scp_send '-w' 'pwd' '-d' 'destination' '-i' 'localfile1' 'localfile2'
+    # scp_send '-w' 'pwd' '-d' 'destination' 'localfile1' 'localfile2'
+    # scp_receive '-w' 'pwd' '-d' 'destination' 'serverfile1' 'serverfile2'
+
+    if [[ "$mode" == "1" ]]; then
+        # download files
+        if [[ ${#filename[*]} -lt 1 ]]; then
+            notify "'Usage: js serverfile1 [serverfile2]'" "Please input filenames need to be download."
+            exitNow
+        fi
+        local serverPath=""
+        for path in ${filename[@]}
+        do
+            serverPath="$serverPath $(packPath "$serverPWD" "$path")"
+        done
+        info "Receive files on server: $serverPath"
+
+        local saveDir=$(chooseFolder)
+
+        if [[ "$saveDir" == "" ]];then
+            notify "Canceld"
+            exitNow
+        fi
+        info "Local saveDir: $saveDir"
+
+        local command="scp -r -P $port $user@$host:\"$serverPath\" '$saveDir'"
+
+        info "Run command: $command"
+        eval $command >> $logfile
+        info "File downloaded successfully!"
+        notify "File downloaded successfully!"
+    else
+        # upload files
+        if [[ "$destination" != "" ]]; then
+            destination=$(packPath "'$serverPWD'" "'$destination'")
+        else
+            destination="$serverPWD"
+        fi
+
+        local chooseMode=$(chooseMode)
+        local sendFile
+        if [[ "$chooseMode" == "0" ]]; then
+            sendFile=$(chooseFile)
+        else
+            sendFile=$(chooseFolder)
+        fi
+        if [[ "$sendFile" == "" ]];then
+            notify "Canceld"
+            exitNow
+        fi
+
+        local patern=""
+        if [[ "$chooseMode" == "2" ]]; then
+            patern="*"
+        fi
+        info "Local sendFile: $sendFile"
+
+        local command="scp -r -P $port ${sendFile}$patern $user@$host:'$destination'"
+
+        info "Run command: $command"
+        eval $command >> $logfile
+        info "File upload successfully!"
+        notify "File upload successfully!"
+    fi
 }
 
 main $*
